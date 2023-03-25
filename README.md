@@ -1,13 +1,13 @@
-# ics-valset-exporter
+# cosmos-valset-exporter
 
-`ics-valset-exporter` is a Node.js application that exports Cosmos validator set information to Prometheus metrics. The application connects to a Cosmos node via a WebSocket and listens for new block events. When a new block event is received, the application fetches the validator set and the list of active validators and exports this information to Prometheus.
+`cosmos-valset-exporter` is a Node.js application that exports Cosmos validator set information to Prometheus metrics. The application connects to a Cosmos node via a WebSocket and listens for new block events. When a new block event is received, the application fetches the validator set and the list of active validators and exports this information to Prometheus.
 
 ## Installation
 
 Clone the repository and install the dependencies:
 ```
-git clone https://github.com/username/ics-valset-exporter.git
-cd ics-valset-exporter
+git clone https://github.com/clemensgg/cosmos-valset-exporter
+cd cosmos-valset-exporter
 npm install
 ```
 
