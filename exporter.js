@@ -1,44 +1,51 @@
 const axios = require('axios');
-const WebSocket = require('ws');
 const { Gauge, register } = require('prom-client');
 const crypto = require('crypto');
 const levelup = require('levelup');
 const leveldown = require('leveldown');
 const express = require('express');
 
-const wsUrl = process.env.WEBSOCKET_URL || 'wss://rpc.cosmos.directory:443/cosmoshub/websocket';
-const restUrl = process.env.REST_URL || 'https://rest.cosmos.directory:443/cosmoshub';
+const providerRpcUrl = process.env.PROVIDER_RPC_URL || 'https://rpc.provider-sentry-01.rs-testnet.polypore.xyz';
+const consumerRpcUrl = process.env.CONSUMER_RPC_URL || 'https://rpc.baryon.ntrn.info';
+const providerRestUrl = process.env.PROVIDER_REST_URL || 'https://rest.provider-sentry-01.rs-testnet.polypore.xyz';
+//const consumerRestUrl = process.env.CONSUMER_REST_URL || 'https://rest.baryon.ntrn.info';
 const metricsPort = process.env.METRICS_PORT || 3013;
 
 // Initialize the Gauges
 const validatorPowerGauge = new Gauge({
   name: 'validator_voting_power',
   help: 'Voting power of validators',
-  labelNames: ['operator_address', 'consensus_pubkey', 'moniker'],
+  labelNames: ['ics_chain', 'chain_id', 'operator_address', 'consensus_pubkey', 'moniker'],
 });
 
 const valsetHashGauge = new Gauge({
   name: 'validator_set_hash',
   help: 'deterministic hash of the validator set',
-  labelNames: ['height', 'valset_hash'],
+  labelNames: ['ics_chain', 'chain_id', 'height', 'valset_hash'],
 });
 
 const validatorPowerUpdatesGauge = new Gauge({
   name: 'validator_power_updates',
   help: 'Validator power updates',
-  labelNames: ['height', 'operator_address', 'consensus_pubkey', 'moniker'],
+  labelNames: ['ics_chain', 'chain_id', 'height', 'operator_address', 'consensus_pubkey', 'moniker'],
+});
+
+const faultyValsetsGauge = new Gauge({
+  name: 'faulty_valsets',
+  help: 'Faulty valsets found on the consumer chain',
+  labelNames: ['chain_id', 'consumer_height', 'valset_hash'],
 });
 
 // Initialize the LevelDB database
 const db = levelup(leveldown('./valset_hashes'));
 
-// Function to get all validators
+// Function to get the validator descriptions
 async function getValidators() {
   let validators = [];
   let nextKey = null;
 
   do {
-    const url = `${restUrl}/cosmos/staking/v1beta1/validators?limit=100${nextKey ? `&pagination.key=${encodeURIComponent(nextKey)}` : ''}`;
+    const url = `${providerRestUrl}/cosmos/staking/v1beta1/validators?limit=100${nextKey ? `&pagination.key=${encodeURIComponent(nextKey)}` : ''}`;
     const response = await axios.get(url);
 
     validators = validators.concat(response.data.validators);
@@ -54,7 +61,7 @@ async function getValidators() {
 }
 
 // Function to get the validator set
-async function getValidatorSet() {
+async function getValidatorSet(restUrl) {
   let validators = [];
   let currentPage = 0;
   let totalPages = 0;
@@ -76,9 +83,9 @@ async function getValidatorSet() {
 function generateValsetHash(validatorSet) {
   const cleanedValidatorSet = validatorSet.map(({ proposer_priority, pub_key, ...validator }) => validator);
   const sortedValidatorSet = cleanedValidatorSet.sort((a, b) => b.address - a.address);
-  const hash = crypto.createHash('sha256');
-  hash.update(JSON.stringify(sortedValidatorSet));
-  return hash.digest('hex');
+  const serializedValidatorSet = JSON.stringify(sortedValidatorSet);
+  const hash = crypto.createHash('sha256').update(serializedValidatorSet).digest('hex');
+  return hash;
 }
 
 // Function to check if a valset hash already exists in the database
@@ -103,112 +110,123 @@ async function checkValsetHashExists(valsetHash) {
   });
 }
 
-// Function to handle new block events
-async function handleNewBlock(message) {
-  const height = message.result.data.value.block.header.height;
-  const validators = await getValidators();
-  const validatorSet = await getValidatorSet();
+async function processNewBlock(chain, rpcUrl, chainId, prevHeight) {
+  try {
+    const blockResponse = await axios.get(`${rpcUrl}/block`);
+    const block = blockResponse.data.result;
+    const height = parseInt(block.block.header.height);
 
-  validatorSet.forEach((validator) => {
-    const { pub_key, voting_power } = validator;
-    const consensusPubkey = pub_key.key;
+    if (height > prevHeight) {
+      console.log(`[${chain}] New block detected. Height: ${height}`);
+      const validators = await getValidators();
+      const validatorSetResponse = await axios.get(`${rpcUrl}/validators`);
+      const validatorSet = validatorSetResponse.data.result.validators;
 
-    const validatorData = validators.find(
-      (v) => v.consensus_pubkey.key === consensusPubkey
-    );
+      validatorSet.forEach((validator) => {
+        const { address, pub_key, voting_power } = validator;
+        const consensusPubkey = pub_key.value;
 
-    if (validatorData) {
-      const { operator_address, description } = validatorData;
-      validatorPowerGauge
-        .labels(operator_address, consensusPubkey, description.moniker)
-        .set(parseInt(voting_power));
-    }
-  });
+        const validatorData = validators.find(
+          (v) => v.consensus_pubkey.key === consensusPubkey
+        );
 
-  // Check and update valset hash
-  const valsetHash = generateValsetHash(validatorSet);
-  const exists = await checkValsetHashExists(valsetHash);
+        if (validatorData) {
+          const { operator_address, description } = validatorData;
+          validatorPowerGauge
+            .labels(chain, chainId, operator_address, consensusPubkey, description.moniker)
+            .set(parseInt(voting_power));
+        }
+      });
 
-  if (!exists) {
-    valsetHashGauge.labels(height, valsetHash).set(1);
-    console.log(`New block height: ${height}, Valset hash: ${valsetHash}`);
-    db.put(height, valsetHash, (error) => {
-      if (error) {
-        console.error(`Error saving valset hash: ${error}`);
-      } else {
-        console.log(`Saved valset hash for height ${height}`);
+      const valsetHash = generateValsetHash(validatorSet);
+
+      if (chain === 'provider') {
+        const exists = await checkValsetHashExists(valsetHash);
+
+        if (!exists) {
+          valsetHashGauge.labels(chain, chainId, height, valsetHash).set(1);
+          console.log(`[${chain}] New block height: ${height}, Valset hash: ${valsetHash}`);
+          db.put(height, valsetHash, (error) => {
+            if (error) {
+              console.error(`Error saving valset hash: ${error}`);
+            } else {
+              console.log(`Saved valset hash for height ${height}`);
+            }
+          });
+        } else {
+          console.log(`[${chain}] Valset hash for height ${height} already exists`);
+        }
+
+        // Check for validator_updates
+        const validatorUpdates = block.block.last_commit.signatures;
+        if (validatorUpdates && validatorUpdates.length > 0) {
+          validatorUpdates.forEach((update) => {
+            const { validator_address } = update;
+            const validatorData = validators.find(
+              (v) => v.operator_address === validator_address
+            );
+
+            if (validatorData) {
+              const { operator_address, consensus_pubkey, description } = validatorData;
+              validatorPowerUpdatesGauge
+                .labels(chain, chainId, height, operator_address, consensus_pubkey.key, description.moniker)
+                .set(parseInt(validatorData.tokens));
+              console.log(`Validator voting_power update: ${operator_address}, New voting_power: ${validatorData.tokens}`);
+            }
+          });
+        }
+      } else if (chain === 'consumer') {
+        const exists = await checkValsetHashExists(valsetHash);
+
+        if (!exists) {
+          faultyValsetsGauge.labels(chainId, height, valsetHash).set(1);
+          console.log(`[${chain}] Faulty valset detected at height ${height}, Valset hash: ${valsetHash}`);
+        } else {
+          console.log(`[${chain}] Valset hash for height ${height} is valid`);
+        }
       }
-    });
-  } else {
-    console.log(`Valset hash for height ${height} already exists`);
+
+      return height;
+    }
+  } catch (error) {
+    console.error(`[${chain}] Error processing new block: ${error}`);
   }
 
-  // Check for validator_updates
-  const validatorUpdates = message.result.data.value.result_end_block.validator_updates;
-  if (validatorUpdates && validatorUpdates.length > 0) {
-    validatorUpdates.forEach((update) => {
-      const { pub_key, power } = update;
-      const consensusPubkey = pub_key.Sum.value.ed25519;
-      const voting_power = parseInt(power);
-
-      const validatorData = validators.find(
-        (v) => v.consensus_pubkey.key === consensusPubkey
-      );
-
-      if (validatorData) {
-        const { operator_address, description } = validatorData;
-        validatorPowerUpdatesGauge
-          .labels(height, operator_address, consensusPubkey, description.moniker)
-          .set(voting_power);
-        console.log(`Validator voting_power update: ${operator_address}, New voting_power: ${voting_power}`);
-      }
-    });
-  }
+  return prevHeight;
 }
 
-// WebSocket connection and event handling
-function connect() {
-  const ws = new WebSocket(wsUrl);
+// Main function to start the script
+async function main() {
+  let providerPrevHeight = 0;
+  let consumerPrevHeight = 0;
 
-  ws.on('open', () => {
-    console.log('Connected to WebSocket');
-    ws.send(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'subscribe',
-        params: { query: "tm.event='NewBlock'" },
-      }),
-    );
+  // Get chain IDs for the provider and consumer chains
+  const providerChainId = (await axios.get(`${providerRpcUrl}/status`)).data.result.node_info.network;
+  const consumerChainId = (await axios.get(`${consumerRpcUrl}/status`)).data.result.node_info.network;
+
+  console.log(`Provider chain ID: ${providerChainId}`);
+  console.log(`Consumer chain ID: ${consumerChainId}`);
+
+  // Start polling both chains for new blocks
+  setInterval(async () => {
+    providerPrevHeight = await processNewBlock('provider', providerRpcUrl, providerChainId, providerPrevHeight);
+  }, 1500);
+
+  setInterval(async () => {
+    consumerPrevHeight = await processNewBlock('consumer', consumerRpcUrl, consumerChainId, consumerPrevHeight);
+  }, 1500);
+
+  // Set up the Express server for metrics
+  const app = express();
+
+  app.get('/metrics', async (req, res) => {
+    res.setHeader('Content-Type', register.contentType);
+    res.send(await register.metrics());
   });
 
-  ws.on('message', async (data) => {
-    const message = JSON.parse(data);
-    if (message.result?.data?.value?.block?.header) {
-      await handleNewBlock(message);
-    }
-  });
-
-  ws.on('error', (error) => {
-    console.error(`WebSocket error: ${error}`);
-  });
-
-  ws.on('close', () => {
-    console.log('WebSocket closed. Reconnecting...');
-    setTimeout(connect, 1000);
+  app.listen(metricsPort, () => {
+    console.log(`Metrics server listening on port ${metricsPort}`);
   });
 }
 
-connect();
-
-// Set up the Express server for metrics
-const app = express();
-
-app.get('/metrics', async (req, res) => {
-  res.setHeader('Content-Type', register.contentType);
-  res.send(await register.metrics());
-});
-
-app.listen(metricsPort, () => {
-  console.log(`Metrics server listening on port ${metricsPort}`);
-});
+main();
