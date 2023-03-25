@@ -176,6 +176,15 @@ async function processNewBlock(chain, rpcUrl, chainId, prevHeight) {
           });
         }
       } else if (chain === 'consumer') {
+        if (prevHeight === 0) {
+          db.put(height, valsetHash, (error) => {
+            if (error) {
+              console.error(`Error saving valset hash: ${error}`);
+            } else {
+              console.log(`[STARTUP] Saved first consumer valset hash for startup, height ${height}`);
+            }
+          });
+        }
         const exists = await checkValsetHashExists(valsetHash);
 
         if (!exists) {
