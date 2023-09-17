@@ -18,13 +18,18 @@ async function main() {
   let providerPrevHeight = 0;
   let consumerPrevHeight = 0;
 
-  setInterval(async () => {
-      providerPrevHeight = await processNewBlock('provider', providerRpcUrl, providerRestUrl, providerChainId, providerPrevHeight, providerRestUrl);
-  }, 1500);
+  async function pollProvider() {
+    providerPrevHeight = await processNewBlock('provider', providerRpcUrl, providerRestUrl, providerChainId, providerPrevHeight, providerRestUrl);
+    setTimeout(pollProvider, 1500);
+  }
 
-  setInterval(async () => {
+  async function pollConsumer() {
       consumerPrevHeight = await processNewBlock('consumer', consumerRpcUrl, consumerRestUrl, consumerChainId, consumerPrevHeight, providerRestUrl);
-  }, 1500);
+      setTimeout(pollConsumer, 1500);
+  }
+
+  pollProvider();
+  pollConsumer();
 
   startServer(metricsPort, providerRpcUrl, consumerRpcUrl, consumerChainId);
 }

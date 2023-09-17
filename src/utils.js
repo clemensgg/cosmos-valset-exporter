@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { db } = require('./database');
 
 function generateValsetHash(validatorSet) {
     const cleanedValidatorSet = validatorSet.map(({ proposer_priority, pub_key, ...validator }) => validator);

@@ -58,7 +58,7 @@ async function processNewBlock(chain, rpcUrl, restUrl, chainId, prevHeight, prov
     const height = parseInt(block.block.header.height);
 
     if (height > prevHeight) {
-      console.log(`[${chain}] New block detected. Height: ${height}`);
+      console.log(`[${chainId}] New block detected. Height: ${height}`);
       const validators = await getValidators(providerRestUrl);
       const validatorSetResponse = await axios.get(`${rpcUrl}/validators`);
       const validatorSet = validatorSetResponse.data.result.validators;
@@ -86,7 +86,7 @@ async function processNewBlock(chain, rpcUrl, restUrl, chainId, prevHeight, prov
 
         if (!exists) {
           valsetHashGauge.labels(chain, chainId, height, valsetHash).set(1);
-          console.log(`[${chain}] New block height: ${height}, Valset hash: ${valsetHash}`);
+          console.log(`[${chainId}] New block height: ${height}, Valset hash: ${valsetHash}`);
           db.run("INSERT INTO valset_hashes (height, hash) VALUES (?, ?)", [height, valsetHash], (error) => {
             if (error) {
               console.error(`Error saving valset hash: ${error}`);
@@ -95,7 +95,7 @@ async function processNewBlock(chain, rpcUrl, restUrl, chainId, prevHeight, prov
             }
           });
         } else {
-          console.log(`[${chain}] Valset hash for height ${height} already exists`);
+          console.log(`[${chainId}] Valset hash for height ${height} already exists`);
         }
 
         // Check for validator_updates
@@ -130,16 +130,16 @@ async function processNewBlock(chain, rpcUrl, restUrl, chainId, prevHeight, prov
 
         if (!exists) {
           faultyValsetsGauge.labels(chainId, height, valsetHash).set(1);
-          console.log(`[${chain}] Faulty valset detected at height ${height}, Valset hash: ${valsetHash}`);
+          console.log(`[${chainId}] Faulty valset detected at height ${height}, Valset hash: ${valsetHash}`);
         } else {
-          console.log(`[${chain}] Valset hash for height ${height} is valid`);
+          console.log(`[${chainId}] Valset hash for height ${height} is valid`);
         }
       }
 
       return height;
     }
   } catch (error) {
-    console.error(`[${chain}] Error processing new block: ${error.message}`);
+    console.error(`[${chainId}] Error processing new block: ${error.message}`);
   }
   return prevHeight;
 }
