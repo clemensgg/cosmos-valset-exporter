@@ -2,10 +2,10 @@
   "name": "ics-valset-exporter",
   "version": "0.1.0",
   "description": "Prometheus exporter for Cosmos SDK validator set data",
-  "main": "exporter.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node exporter.js",
-    "exporter": "node exporter.js",
+    "start": "node app.js",
+    "exporter": "node app.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "CryptoCrew",

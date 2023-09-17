@@ -1,38 +1,57 @@
 const axios = require('axios');
+const { db } = require('./database');
+const { 
+  generateValsetHash,
+  checkValsetHashExists 
+} = require('./utils');
+const {
+  validatorPowerGauge,
+  valsetHashGauge,
+  validatorPowerUpdatesGauge,
+  faultyValsetsGauge
+} = require('./metrics');
 
 async function getValidators(providerRestUrl) {
-    let validators = [];
-    let nextKey = null;
+  let validators = [];
+  let nextKey = null;
+  try {
     do {
-        const url = `${providerRestUrl}/cosmos/staking/v1beta1/validators?limit=100${nextKey ? `&pagination.key=${encodeURIComponent(nextKey)}` : ''}`;
-        const response = await axios.get(url);
-        validators = validators.concat(response.data.validators);
-        if (response.data.pagination && response.data.pagination.next_key) {
-            nextKey = response.data.pagination.next_key;
-        } else {
-            break;
-        }
+      const url = `${providerRestUrl}/cosmos/staking/v1beta1/validators?limit=100${nextKey ? `&pagination.key=${encodeURIComponent(nextKey)}` : ''}`;
+      const response = await axios.get(url);
+      validators = validators.concat(response.data.validators);
+      if (response.data.pagination && response.data.pagination.next_key) {
+        nextKey = response.data.pagination.next_key;
+      } else {
+        break;
+      }
     } while (nextKey);
-    return validators;
+  } catch (error) {
+    console.error(`Error fetching validators from ${providerRestUrl}: ${error.message}`);
+  }
+  return validators;
 }
 
 async function getValidatorSet(restUrl) {
-    let validators = [];
-    let currentPage = 0;
-    let totalPages = 0;
+  let validators = [];
+  let currentPage = 0;
+  let totalPages = 0;
+  try {
     do {
-        const response = await axios.get(
-            `${restUrl}/cosmos/base/tendermint/v1beta1/validatorsets/latest?pagination.offset=${currentPage * 100}&pagination.limit=100`
-        );
-        const fetchedValidators = response.data.validators;
-        totalPages = Math.ceil(response.data.pagination.total / 100);
-        validators = [...validators, ...fetchedValidators];
-        currentPage++;
+      const response = await axios.get(
+        `${restUrl}/cosmos/base/tendermint/v1beta1/validatorsets/latest?pagination.offset=${currentPage * 100}&pagination.limit=100`
+      );
+      const fetchedValidators = response.data.validators;
+      totalPages = Math.ceil(response.data.pagination.total / 100);
+      validators = [...validators, ...fetchedValidators];
+      currentPage++;
     } while (currentPage < totalPages);
-    return validators;
+  } catch (error) {
+    console.error(`Error fetching validator set from ${restUrl}: ${error.message}`);
+  }
+  return validators;
 }
 
-async function processNewBlock(chain, rpcUrl, chainId, prevHeight) {
+async function processNewBlock(chain, rpcUrl, restUrl, chainId, prevHeight, providerRestUrl) {
   try {
     const blockResponse = await axios.get(`${rpcUrl}/block`);
     const block = blockResponse.data.result;
@@ -40,7 +59,7 @@ async function processNewBlock(chain, rpcUrl, chainId, prevHeight) {
 
     if (height > prevHeight) {
       console.log(`[${chain}] New block detected. Height: ${height}`);
-      const validators = await getValidators();
+      const validators = await getValidators(providerRestUrl);
       const validatorSetResponse = await axios.get(`${rpcUrl}/validators`);
       const validatorSet = validatorSetResponse.data.result.validators;
 
@@ -120,9 +139,8 @@ async function processNewBlock(chain, rpcUrl, chainId, prevHeight) {
       return height;
     }
   } catch (error) {
-    console.error(`[${chain}] Error processing new block: ${error}`);
+    console.error(`[${chain}] Error processing new block: ${error.message}`);
   }
-
   return prevHeight;
 }
 
