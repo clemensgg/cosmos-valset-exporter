@@ -1,2 +1,3 @@
 node_modules
 valset_hashes
+*.sqlite

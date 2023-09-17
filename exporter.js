@@ -1,14 +1,13 @@
 const axios = require('axios');
 const { Gauge, register } = require('prom-client');
 const crypto = require('crypto');
-const levelup = require('levelup');
-const leveldown = require('leveldown');
 const express = require('express');
+const sqlite3 = require('sqlite3').verbose();
 
 const providerRpcUrl = process.env.PROVIDER_RPC_URL || 'https://rpc.provider-sentry-01.rs-testnet.polypore.xyz';
-const consumerRpcUrl = process.env.CONSUMER_RPC_URL || 'https://rpc.baryon.ntrn.info';
+const consumerRpcUrl = process.env.CONSUMER_RPC_URL || 'https://rpc-falcron.pion-1.ntrn.tech';
 const providerRestUrl = process.env.PROVIDER_REST_URL || 'https://rest.provider-sentry-01.rs-testnet.polypore.xyz';
-//const consumerRestUrl = process.env.CONSUMER_REST_URL || 'https://rest.baryon.ntrn.info';
+//const consumerRestUrl = process.env.CONSUMER_REST_URL || 'https://rest-falcron.pion-1.ntrn.tech';
 const metricsPort = process.env.METRICS_PORT || 3013;
 
 // Initialize the Gauges
@@ -36,8 +35,11 @@ const faultyValsetsGauge = new Gauge({
   labelNames: ['chain_id', 'consumer_height', 'valset_hash'],
 });
 
-// Initialize the LevelDB database
-const db = levelup(leveldown('./valset_hashes'));
+// Initialize the SQLite database
+const db = new sqlite3.Database('./valset_hashes.sqlite');
+
+// Create table if not exists
+db.run("CREATE TABLE IF NOT EXISTS valset_hashes (height INTEGER PRIMARY KEY, hash TEXT)");
 
 // Function to get the validator descriptions
 async function getValidators() {
@@ -91,21 +93,12 @@ function generateValsetHash(validatorSet) {
 // Function to check if a valset hash already exists in the database
 async function checkValsetHashExists(valsetHash) {
   return new Promise((resolve, reject) => {
-    const stream = db.createValueStream();
-
-    stream.on('data', (value) => {
-      if (value.toString() === valsetHash) {
-        resolve(true);
-        stream.destroy();
+    db.get("SELECT hash FROM valset_hashes WHERE hash = ?", [valsetHash], (err, row) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(!!row);
       }
-    });
-
-    stream.on('end', () => {
-      resolve(false);
-    });
-
-    stream.on('error', (error) => {
-      reject(error);
     });
   });
 }
@@ -146,7 +139,7 @@ async function processNewBlock(chain, rpcUrl, chainId, prevHeight) {
         if (!exists) {
           valsetHashGauge.labels(chain, chainId, height, valsetHash).set(1);
           console.log(`[${chain}] New block height: ${height}, Valset hash: ${valsetHash}`);
-          db.put(height, valsetHash, (error) => {
+          db.run("INSERT INTO valset_hashes (height, hash) VALUES (?, ?)", [height, valsetHash], (error) => {
             if (error) {
               console.error(`Error saving valset hash: ${error}`);
             } else {
@@ -177,7 +170,7 @@ async function processNewBlock(chain, rpcUrl, chainId, prevHeight) {
         }
       } else if (chain === 'consumer') {
         if (prevHeight === 0) {
-          db.put(height, valsetHash, (error) => {
+          db.run("INSERT INTO valset_hashes (height, hash) VALUES (?, ?)", [height, valsetHash], (error) => {
             if (error) {
               console.error(`Error saving valset hash: ${error}`);
             } else {
