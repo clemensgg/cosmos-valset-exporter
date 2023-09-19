@@ -1,7 +1,7 @@
-const axios = require('axios');
-const { initializeDB } = require('./src/database');
-const { startServer } = require('./src/server');
-const { processNewBlock } = require('./src/chain');
+import axios from 'axios';
+import { initializeDB } from './src/database.mjs';
+import { startServer } from './src/server.mjs';
+import { processNewBlock } from './src/chain.mjs';
 
 const providerRpcUrl = process.env.PROVIDER_RPC_URL || 'https://rpc.provider-sentry-01.rs-testnet.polypore.xyz';
 const consumerRpcUrl = process.env.CONSUMER_RPC_URL || 'https://rpc-falcron.pion-1.ntrn.tech';
@@ -19,19 +19,19 @@ async function main() {
   let consumerPrevHeight = 0;
 
   async function pollProvider() {
-    providerPrevHeight = await processNewBlock('provider', providerRpcUrl, providerRestUrl, providerChainId, providerPrevHeight, providerRestUrl);
+    providerPrevHeight = await processNewBlock('provider', providerRpcUrl, providerChainId, providerPrevHeight, providerRestUrl);
     setTimeout(pollProvider, 1500);
   }
 
   async function pollConsumer() {
-      consumerPrevHeight = await processNewBlock('consumer', consumerRpcUrl, consumerRestUrl, consumerChainId, consumerPrevHeight, providerRestUrl);
+      consumerPrevHeight = await processNewBlock('consumer', consumerRpcUrl, consumerChainId, consumerPrevHeight, providerRestUrl);
       setTimeout(pollConsumer, 1500);
   }
 
   pollProvider();
   pollConsumer();
 
-  startServer(metricsPort, providerRpcUrl, consumerRpcUrl, consumerChainId);
+  startServer(metricsPort);
 }
 
 main().catch(error => {

@@ -1,22 +1,23 @@
-const axios = require('axios');
-const { db } = require('./database');
-const { 
-  generateValsetHash,
+import axios from 'axios';
+import { interchain_security } from 'interchain-security';
+import { db } from './database.mjs';
+import { 
+  generateValsetHash, 
   checkValsetHashExists 
-} = require('./utils');
-const {
+} from './utils.mjs';
+import { 
   validatorPowerGauge,
   valsetHashGauge,
   validatorPowerUpdatesGauge,
   faultyValsetsGauge
-} = require('./metrics');
+} from './metrics.mjs';
 
-async function getValidators(providerRestUrl) {
+async function getValidators(restUrl) {
   let validators = [];
   let nextKey = null;
   try {
     do {
-      const url = `${providerRestUrl}/cosmos/staking/v1beta1/validators?limit=100${nextKey ? `&pagination.key=${encodeURIComponent(nextKey)}` : ''}`;
+      const url = `${restUrl}/cosmos/staking/v1beta1/validators?limit=100${nextKey ? `&pagination.key=${encodeURIComponent(nextKey)}` : ''}`;
       const response = await axios.get(url);
       validators = validators.concat(response.data.validators);
       if (response.data.pagination && response.data.pagination.next_key) {
@@ -51,7 +52,7 @@ async function getValidatorSet(restUrl) {
   return validators;
 }
 
-async function processNewBlock(chain, rpcUrl, restUrl, chainId, prevHeight, providerRestUrl) {
+async function processNewBlock(chain, rpcUrl, chainId, prevHeight, providerRestUrl) {
   try {
     const blockResponse = await axios.get(`${rpcUrl}/block`);
     const block = blockResponse.data.result;
@@ -63,9 +64,22 @@ async function processNewBlock(chain, rpcUrl, restUrl, chainId, prevHeight, prov
       const validatorSetResponse = await axios.get(`${rpcUrl}/validators`);
       const validatorSet = validatorSetResponse.data.result.validators;
 
-      validatorSet.forEach((validator) => {
+      validatorSet.forEach(async (validator) => {
         const { address, pub_key, voting_power } = validator;
         const consensusPubkey = pub_key.value;
+
+        // interchain-security module test
+        /*
+        try {
+            var PUBKEYTEST = await icsClient.interchain_security.ccv.provider.v1.queryValidatorConsumerAddr({
+            chainId: chainId,
+            providerAddress: address
+          });
+        } catch(e) {
+          console.error(e);
+        }
+        console.log(PUBKEYTEST)
+        */
 
         const validatorData = validators.find(
           (v) => v.consensus_pubkey.key === consensusPubkey
@@ -144,7 +158,7 @@ async function processNewBlock(chain, rpcUrl, restUrl, chainId, prevHeight, prov
   return prevHeight;
 }
 
-module.exports = {
+export {
   getValidators,
   getValidatorSet,
   processNewBlock

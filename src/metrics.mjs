@@ -1,4 +1,4 @@
-const { Gauge } = require('prom-client');
+import { Gauge } from 'prom-client';
 
 const validatorPowerGauge = new Gauge({
     name: 'validator_voting_power',
@@ -46,7 +46,7 @@ function filterGaugeDataByChainId(gauge, chainId) {
         }, {});
 }
 
-module.exports = {
+export {
     validatorPowerGauge,
     valsetHashGauge,
     validatorPowerUpdatesGauge,

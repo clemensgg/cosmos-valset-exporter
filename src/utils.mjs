@@ -1,5 +1,5 @@
-const crypto = require('crypto');
-const { db } = require('./database');
+import crypto from 'crypto';
+import { db } from './database.mjs';
 
 function generateValsetHash(validatorSet) {
     const cleanedValidatorSet = validatorSet.map(({ proposer_priority, pub_key, ...validator }) => validator);
@@ -21,7 +21,7 @@ async function checkValsetHashExists(valsetHash) {
     });
 }
 
-module.exports = {
+export {
     generateValsetHash,
     checkValsetHashExists
 };

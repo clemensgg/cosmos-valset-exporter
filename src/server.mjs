@@ -1,17 +1,15 @@
-const express = require('express');
-const { register } = require('prom-client');
-const { db } = require('./database');
-const { getValidators, processNewBlock } = require('./chain');
-const {
+import express from 'express';
+import { register } from 'prom-client';
+import {
     validatorPowerGauge,
     valsetHashGauge,
     validatorPowerUpdatesGauge,
     faultyValsetsGauge,
     getLastValueOfGauge,
     filterGaugeDataByChainId
-} = require('./metrics');
+} from './metrics.mjs';
 
-function startServer(metricsPort, providerRpcUrl, consumerRpcUrl, registeredConsumerChainIds) {
+function startServer(metricsPort) {
     const app = express();
     app.use(express.json());
 
@@ -55,6 +53,6 @@ function startServer(metricsPort, providerRpcUrl, consumerRpcUrl, registeredCons
     });
 }
 
-module.exports = {
+export {
     startServer
 };
