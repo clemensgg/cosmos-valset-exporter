@@ -1,11 +1,12 @@
 import axios from 'axios';
 import { interchain_security } from 'interchain-security';
 import { db } from './database.mjs';
-import { 
-  generateValsetHash, 
-  checkValsetHashExists 
+import {
+  generateValsetHash,
+  checkValsetHashExists,
+  pubKeyToValcons
 } from './utils.mjs';
-import { 
+import {
   validatorPowerGauge,
   valsetHashGauge,
   validatorPowerUpdatesGauge,
@@ -52,7 +53,7 @@ async function getValidatorSet(restUrl) {
   return validators;
 }
 
-async function processNewBlock(chain, rpcUrl, chainId, prevHeight, providerRestUrl) {
+async function processNewBlock(chain, rpcUrl, chainId, prevHeight, providerRpcUrl, providerRestUrl) {
   try {
     const blockResponse = await axios.get(`${rpcUrl}/block`);
     const block = blockResponse.data.result;
@@ -64,34 +65,74 @@ async function processNewBlock(chain, rpcUrl, chainId, prevHeight, providerRestU
       const validatorSetResponse = await axios.get(`${rpcUrl}/validators`);
       const validatorSet = validatorSetResponse.data.result.validators;
 
-      validatorSet.forEach(async (validator) => {
-        const { address, pub_key, voting_power } = validator;
-        const consensusPubkey = pub_key.value;
+      // LCD Client doesn't expose queryValidatorConsumerAddr
+      /* 
+      const icsClient = await interchain_security.ClientFactory.createLCDClient({
+        restEndpoint: providerRestUrl
+      })
+    */
 
-        // interchain-security module test
-        /*
-        try {
-            var PUBKEYTEST = await icsClient.interchain_security.ccv.provider.v1.queryValidatorConsumerAddr({
-            chainId: chainId,
-            providerAddress: address
+      async function processValidators() {
+        if (chain === 'consumer') {
+          const icsClient = await interchain_security.ClientFactory.createRPCQueryClient({
+            rpcEndpoint: providerRpcUrl
           });
-        } catch(e) {
-          console.error(e);
-        }
-        console.log(PUBKEYTEST)
-        */
+          for (const validator of validators) {
+            if (!validator.hasOwnProperty('consumerSigningKeys')) {
+              validator.consumerSigningKeys = {};
+            }
+            let consumerSigningKey = null;
+            let valconsAddress = null
+            try {
+              valconsAddress = pubKeyToValcons(validator.consensus_pubkey.key, 'cosmos');
+              consumerSigningKey = await icsClient.interchain_security.ccv.provider.v1.queryValidatorConsumerAddr({
+                chainId: chainId,
+                providerAddress: valconsAddress
+              });
+              consumerSigningKey = consumerSigningKey.consumerAddress;
+            } catch (e) {
+              console.error(e);
+            }
+            validator.providerSigningKey = valconsAddress;
 
-        const validatorData = validators.find(
-          (v) => v.consensus_pubkey.key === consensusPubkey
-        );
-
-        if (validatorData) {
-          const { operator_address, description } = validatorData;
-          validatorPowerGauge
-            .labels(chain, chainId, operator_address, consensusPubkey, description.moniker)
-            .set(parseInt(voting_power));
+            if (consumerSigningKey && consumerSigningKey !== '') {
+              validator.consumerSigningKeys[chainId] = consumerSigningKey;
+            } else {
+              validator.consumerSigningKeys[chainId] = valconsAddress;
+            }
+            console.log(validator.operator_address + " provider key " + validator.providerSigningKey + " | " + chainId + ": " + validator.consumerSigningKeys[chainId]);
+          }
         }
-      });
+      }
+
+      async function processValidatorSet() {
+        validatorSet.forEach(async (validator) => {
+          const { address, pub_key, voting_power } = validator;
+          const consensusPubkey = pubKeyToValcons(pub_key.value, 'cosmos');
+          let validatorData;
+          if (chain === 'provider') {
+            validatorData = validators.find(
+              (v) => v.providerSigningKey === consensusPubkey
+            );
+          } else {
+            validatorData = validators.find(
+              (v) => v.consumerSigningKeys[chainId] === consensusPubkey
+            );
+          }
+          if (validatorData) {
+            const { operator_address, description } = validatorData;
+            validatorPowerGauge
+              .labels(chain, chainId, operator_address, consensusPubkey, description.moniker)
+              .set(parseInt(voting_power));
+          }
+        });
+      }
+
+      // Execute the functions sequentially
+      (async () => {
+        await processValidators();
+        await processValidatorSet();
+      })();
 
       const valsetHash = generateValsetHash(validatorSet);
 
